@@ -1,0 +1,7 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<objects>
+  <object name="roadcoordinate" type="roadcoordinate">
+    <property name="roadcoordinate1" type="System.Numerics.Vector3">&lt;1, 1, 1&gt;</property>
+    <property name="roadcoordinate2" type="System.Numerics.Vector3">&lt;3, 1, 3&gt;</property>
+  </object>
+</objects>

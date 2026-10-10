@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<objects>
+  <object name="System.Object[]" type="System.Object[]">
+    <property name="Length" type="System.Int32">3</property>
+    <property name="LongLength" type="System.Int64">3</property>
+    <property name="Rank" type="System.Int32">1</property>
+    <property name="SyncRoot" type="System.Object">
+      <array>
+        <value index="0" type="System.Int32">1</value>
+        <value index="1" type="System.Int32">2</value>
+        <value index="2" type="System.Int32">3</value>
+      </array>
+    </property>
+    <property name="IsReadOnly" type="System.Boolean">False</property>
+    <property name="IsFixedSize" type="System.Boolean">True</property>
+    <property name="IsSynchronized" type="System.Boolean">False</property>
+    <property name="Count" type="System.Int32">3</property>
+  </object>
+</objects>

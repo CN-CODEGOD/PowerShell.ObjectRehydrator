@@ -1,0 +1,15 @@
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+  <Obj RefId="0">
+    <TN RefId="0">
+      <T>System.Numerics.Vector3</T>
+      <T>System.ValueType</T>
+      <T>System.Object</T>
+    </TN>
+    <ToString>&lt;1, 2, 3&gt;</ToString>
+    <Props>
+      <Sg N="X">1</Sg>
+      <Sg N="Y">2</Sg>
+      <Sg N="Z">3</Sg>
+    </Props>
+  </Obj>
+</Objs>

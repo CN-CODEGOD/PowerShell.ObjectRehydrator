@@ -1,0 +1,205 @@
+**********************
+PowerShell transcript start
+Start time: 20261008084752
+Username: pwsh\root
+RunAs User: pwsh\root
+Configuration Name: 
+Machine: pwsh (Unix 6.18.18.0)
+Host Application: /opt/microsoft/powershell/7/pwsh.dll
+Process ID: 5747
+PSVersion: 7.5.0
+PSEdition: Core
+GitCommitId: 7.5.0
+OS: Ubuntu 22.04.5 LTS
+Platform: Unix
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+Transcript started, output file is ./bug.txt
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>$scriptblock={write-host 1}
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>save-xmlObject -InputObject $scriptblock -Path ./tests/xml/scriptblock.xml
+>> TerminatingError(Save-XmlObject): "Cannot evaluate parameter 'InputObject' because its argument is specified as a script block and there is no input. A script block cannot be evaluated without input."
+Save-XmlObject: Cannot evaluate parameter 'InputObject' because its argument is specified as a script block and there is no input. A script block cannot be evaluated without input.
+Save-XmlObject: Cannot evaluate parameter 'InputObject' because its argument is specified as a script block and there is no input. A script block cannot be evaluated without input.
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>stop-Transcript
+**********************
+PowerShell transcript end
+End time: 20261008084819
+**********************
+**********************
+PowerShell transcript start
+Start time: 20261008091909
+Username: pwsh\root
+RunAs User: pwsh\root
+Configuration Name: 
+Machine: pwsh (Unix 6.18.18.0)
+Host Application: /opt/microsoft/powershell/7/pwsh.dll
+Process ID: 5747
+PSVersion: 7.5.0
+PSEdition: Core
+GitCommitId: 7.5.0
+OS: Ubuntu 22.04.5 LTS
+Platform: Unix
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+Transcript started, output file is ./bug.txt
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>cat ./tests/roadcoordinate.ps1
+class roadcoordinate {
+[System.Numerics.Vector3]$roadcoordinate1
+[System.Numerics.Vector3]$roadcoordinate2
+
+roadcoordinate ($value){
+$this.DoInit($value)
+}
+roadcoordinate ([System.Numerics.Vector3]$roadcoordinate1,[System.Numerics.Vector3]$roadcoordinate2)
+{
+   $this.roadcoordinate1=$roadcoordinate1
+   $this.roadcoordinate2=$roadcoordinate2
+}
+
+
+### validation
+[void]DoInit ([pscustomobject]$pscustomobject){
+    $pscustomobjectName= (($pscustomobject)|Get-Member -Type NoteProperty ).Name
+       foreach($propertyName in $pscustomobjectName ){
+
+          $this.$Propertyname= $pscustomobject.$Propertyname
+       }
+
+}
+
+[void] DoInit (
+
+
+[hashtable]$properties
+
+
+)
+{
+   foreach ($property in $properties.key) {
+
+       $this.$property =$properties.$property
+   }
+}
+
+}
+
+$pscustomobject =[pscustomObject]@{
+	roadcoordinate1=[pscustomobject]@{
+		x=1
+		y=1
+		z=1}
+	roadcoordinate2=[pscustomObject]@{
+		x=3
+		y=1
+		z=3
+	}
+}
+
+[roadcoordinate]::new($pscustomobject)
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>$road= ./tests/roadcoordinate.ps1
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>./tests/test_script.ps1 -path ./tests/xml/test.xml -inputObject $road
+True
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>import-xml -path ./tests/xml/road.xml
+
+roadcoordinate1 roadcoordinate2
+--------------- ---------------
+<0, 0, 0>       <0, 0, 0>
+
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>$rehydrated_object = import-xml -path ./tests/xml/road.xml
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>$rehydrated_object
+
+roadcoordinate1 roadcoordinate2
+--------------- ---------------
+<0, 0, 0>       <0, 0, 0>
+
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>$road
+
+roadcoordinate1 roadcoordinate2
+--------------- ---------------
+<1, 1, 1>       <3, 1, 3>
+
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>stop-Transcript
+**********************
+PowerShell transcript end
+End time: 20261008092048
+**********************
+**********************
+PowerShell transcript start
+Start time: 20261008092352
+Username: pwsh\root
+RunAs User: pwsh\root
+Configuration Name: 
+Machine: pwsh (Unix 6.18.18.0)
+Host Application: /opt/microsoft/powershell/7/pwsh.dll
+Process ID: 5747
+PSVersion: 7.5.0
+PSEdition: Core
+GitCommitId: 7.5.0
+OS: Ubuntu 22.04.5 LTS
+Platform: Unix
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1, 6.0, 7.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+WSManStackVersion: 3.0
+**********************
+Transcript started, output file is ./bug.txt
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>./tests/test_script.ps1 -path ./tests/xml/test.xml -inputObject $null
+PS>TerminatingError(Save-XmlObject): "Cannot validate argument on parameter 'InputObject'. The argument is null. Provide a valid value for the argument, and then try running the command again."
+Save-XmlObject: /root/workspace/PowerShell.ObjectRehydrator/tests/test_script.ps1:12
+Line |
+  12 |  save-xmlObject -inputObject $inputObject -path $path
+     |                              ~~~~~~~~~~~~
+     | Cannot validate argument on parameter 'InputObject'. The argument is null. Provide a valid value for the argument, and then try running the command again.
+Save-XmlObject: /root/workspace/PowerShell.ObjectRehydrator/tests/test_script.ps1:12
+Line |
+  12 |  save-xmlObject -inputObject $inputObject -path $path
+     |                              ~~~~~~~~~~~~
+     | Cannot validate argument on parameter 'InputObject'. The argument is null. Provide a valid value for the argument, and then try running the command again.
+
+>> TerminatingError(Import-Xml): "XML file not found: /root/workspace/PowerShell.ObjectRehydrator/tests/xml/test.xml"
+Import-Xml: /root/workspace/PowerShell.ObjectRehydrator/tests/test_script.ps1:14
+Line |
+  14 |  $Rehydrated_object=import-xml -path $path
+     |                     ~~~~~~~~~~~~~~~~~~~~~~
+     | XML file not found: /root/workspace/PowerShell.ObjectRehydrator/tests/xml/test.xml
+Import-Xml: /root/workspace/PowerShell.ObjectRehydrator/tests/test_script.ps1:14
+Line |
+  14 |  $Rehydrated_object=import-xml -path $path
+     |                     ~~~~~~~~~~~~~~~~~~~~~~
+     | XML file not found: /root/workspace/PowerShell.ObjectRehydrator/tests/xml/test.xml
+
+InvalidOperation: /root/workspace/PowerShell.ObjectRehydrator/tests/test_script.ps1:16
+Line |
+  16 |  if ($rehydrated_object.gettype() -eq $inputObject.gettype()){
+     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+InvalidOperation: /root/workspace/PowerShell.ObjectRehydrator/tests/test_script.ps1:16
+Line |
+  16 |  if ($rehydrated_object.gettype() -eq $inputObject.gettype()){
+     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | You cannot call a method on a null-valued expression.
+
+      ~/../PowerShell.ObjectRehydrator ❯
+PS>stop-Transcript
+**********************
+PowerShell transcript end
+End time: 20261008092421
+**********************

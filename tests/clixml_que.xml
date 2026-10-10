@@ -1,0 +1,12 @@
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+  <Obj RefId="0">
+    <TN RefId="0">
+      <T>System.Collections.Generic.Queue`1[[System.Int32, System.Private.CoreLib, Version=9.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]</T>
+      <T>System.Object</T>
+    </TN>
+    <QUE>
+      <I32>1</I32>
+      <I32>2</I32>
+    </QUE>
+  </Obj>
+</Objs>

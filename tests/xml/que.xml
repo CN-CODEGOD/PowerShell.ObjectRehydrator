@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<objects>
+  <object name="System.Collections.Generic.Queue`1[[System.Int32, System.Private.CoreLib, Version=9.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]" type="System.Collections.Generic.Queue`1[[System.Int32, System.Private.CoreLib, Version=9.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]">
+    <array>
+      <value index="0" type="System.Int32">3</value>
+      <value index="1" type="System.Int32">2</value>
+      <value index="2" type="System.Int32">1</value>
+    </array>
+  </object>
+</objects>

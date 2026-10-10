@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<objects>
+  <object name="System.String" type="System.String">
+    <property name="Length" type="System.Int32">1</property>
+  </object>
+</objects>

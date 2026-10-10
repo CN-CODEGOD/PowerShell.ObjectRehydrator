@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+dist/
+
+# PoC / test build artifacts (67M)
+tests/poc/bin/
+tests/poc/obj/
+tests/poc/**/runtimes/
+
+# IDE
+.vs/
+.idea/
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local test XML scratch (keep sample .xml in tests/)
+tests/xml/*.tmp
+
+# Logs
+tests/logs/*.txt
