@@ -1,0 +1,7 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<objects>
+  <object name="System.Numerics.Vector2" type="System.Numerics.Vector2">
+    <property name="X" type="System.Single">1</property>
+    <property name="Y" type="System.Single">2</property>
+  </object>
+</objects>
