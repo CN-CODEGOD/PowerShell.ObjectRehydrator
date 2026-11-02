@@ -6,16 +6,12 @@ using PowerShell.ObjectRehydrator.Serialization;
 
 namespace PowerShell.ObjectRehydrator.Cmdlets
 {
-    /// <summary>
-    /// Save-XmlObject — 把对象序列化并追加到 XML 文件。
-    /// 方案一：用 InstanceSerializer（零代码，自描述 XML 含 type）。
-    /// </summary>
     [Cmdlet(VerbsData.Save, "XmlObject")]
     public sealed class SaveXmlObjectCommand : PSCmdlet
     {
         [Parameter(Mandatory = true, Position = 0, ValueFromPipeline = true)]
-        [ValidateNotNull]
-        public PSObject InputObject { get; set; }
+        [AllowNull]
+        public object InputObject { get; set; }
 
         [Parameter]
         [ValidateNotNullOrEmpty]
@@ -27,7 +23,8 @@ namespace PowerShell.ObjectRehydrator.Cmdlets
 
             if (string.IsNullOrEmpty(target))
             {
-                var pathProp = InputObject.Properties["Path"];
+                var ps = PSObject.AsPSObject(InputObject);
+                var pathProp = ps.Properties["Path"];
                 if (pathProp != null)
                     target = pathProp.Value?.ToString();
             }
@@ -43,8 +40,7 @@ namespace PowerShell.ObjectRehydrator.Cmdlets
             string resolved = GetUnresolvedProviderPathFromPSPath(target);
             EnsureObjectsFile(resolved);
 
-            object baseObj = InputObject.BaseObject ?? InputObject;
-            XElement node = InstanceSerializer.ToObjectElement(baseObj);
+            XElement node = InstanceSerializer.ToObjectElement(InputObject);
 
             XDocument doc = XDocument.Load(resolved);
             doc.Root.Add(node);

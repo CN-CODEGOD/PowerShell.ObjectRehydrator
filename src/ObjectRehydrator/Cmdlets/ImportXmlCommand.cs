@@ -46,8 +46,16 @@ namespace PowerShell.ObjectRehydrator.Cmdlets
                     continue;
                 }
 
-                if (instance != null)
-                    WriteObject(instance);
+                string typeName = (string)objectElement.Attribute("type")
+                               ?? (string)objectElement.Attribute("name");
+
+                if (typeName == "null" || objectElement.Attribute("null")?.Value == "true")
+                {
+                    WriteObject(null);
+                    continue;
+                }
+
+                WriteObject(instance, false);
             }
         }
     }

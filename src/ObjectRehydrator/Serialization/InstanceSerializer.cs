@@ -8,13 +8,6 @@ using System.Xml.Linq;
 
 namespace PowerShell.ObjectRehydrator.Serialization
 {
-    /// <summary>
-    /// 反射实例 → 自动生成带 type 元数据的自描述 XML（方案 X：每层都标 type）。
-    /// 用户类零代码（不需要 save()、构造函数、DoInit）。
-    ///
-    /// 顶层分流：弱类型（标量/array/hashtable/scriptblock）直接写值节点，
-    /// 不写 property 列表；类实例写 property 列表。
-    /// </summary>
     public static class InstanceSerializer
     {
         public static string Save(object instance)
@@ -25,19 +18,32 @@ namespace PowerShell.ObjectRehydrator.Serialization
         public static XElement ToObjectElement(object instance)
         {
             if (instance == null)
-                throw new ArgumentNullException(nameof(instance));
+            {
+                return new XElement("object",
+                    new XAttribute("name", "null"),
+                    new XAttribute("type", "null"),
+                    new XAttribute("null", "true"));
+            }
+
+            object unwrapped = Unwrap(instance);
+
+            if (unwrapped == null)
+            {
+                return new XElement("object",
+                    new XAttribute("name", "null"),
+                    new XAttribute("type", "null"),
+                    new XAttribute("null", "true"));
+            }
 
             string typeName = GetTypeName(instance);
-            object baseObj = (instance is PSObject wrapped) ? wrapped.BaseObject : instance;
 
             var element = new XElement("object",
                 new XAttribute("name", typeName),
                 new XAttribute("type", typeName));
 
-            object content = SerializeValue(baseObj);
+            object content = SerializeValue(unwrapped);
 
-            // 类实例 → property 列表；弱类型 → 单个值节点
-            if (content is IEnumerable<XElement> propList)
+            if (content is IEnumerable<XElement> propList && !(content is XElement))
             {
                 foreach (var p in propList) element.Add(p);
             }
@@ -49,12 +55,32 @@ namespace PowerShell.ObjectRehydrator.Serialization
             return element;
         }
 
+        private static object Unwrap(object value)
+        {
+            if (value is PSObject pso) return pso.BaseObject;
+            return value;
+        }
+
         private static string GetTypeName(object instance)
         {
+            if (instance == null) return "null";
+
             var ps = instance as PSObject ?? PSObject.AsPSObject(instance);
+            var baseObj = ps.BaseObject;
+
+            if (baseObj == null) return "null";
+
+            if (baseObj is PSCustomObject)
+                return "PSCustomObject";
+
             if (ps.TypeNames.Count > 0)
-                return ps.TypeNames[0];
-            return instance.GetType().Name;
+            {
+                var tn = ps.TypeNames[0];
+                if (!string.IsNullOrEmpty(tn))
+                    return tn;
+            }
+
+            return baseObj.GetType().FullName ?? baseObj.GetType().Name;
         }
 
         private static List<XElement> SerializeProperties(object instance)
@@ -86,8 +112,7 @@ namespace PowerShell.ObjectRehydrator.Serialization
                 catch { }
 
                 object value;
-                try { value = p.Value; }
-                catch { continue; }
+                try { value = p.Value; } catch { continue; }
 
                 string typeAttr;
                 if (propTypeMap.TryGetValue(p.Name, out var declaredType))
@@ -95,19 +120,18 @@ namespace PowerShell.ObjectRehydrator.Serialization
                 else if (value != null)
                     typeAttr = TypeOf(value);
                 else
-                    typeAttr = "System.String";
+                    typeAttr = "null";
 
                 result.Add(new XElement(
                     "property",
                     new XAttribute("name", p.Name),
                     new XAttribute("type", typeAttr),
-                    SerializeValue(value)));
+                    SerializeValue(Unwrap(value))));
             }
 
             return result;
         }
 
-        /// <summary>按值种类生成节点：scriptblock / hashtable / array / property 列表 / 文本。</summary>
         private static object SerializeValue(object value)
         {
             if (value == null)
@@ -116,8 +140,18 @@ namespace PowerShell.ObjectRehydrator.Serialization
             if (value is PSObject pso)
                 value = pso.BaseObject;
 
+            if (value == null)
+                return string.Empty;
+
             if (value is ScriptBlock sb)
                 return new XElement("scriptblock", sb.ToString());
+
+            if (value is DateTime dt)
+            {
+                return new XElement("datetime",
+                    new XAttribute("ticks", dt.Ticks),
+                    new XAttribute("kind", (int)dt.Kind));
+            }
 
             if (value is IDictionary dict)
             {
@@ -149,6 +183,9 @@ namespace PowerShell.ObjectRehydrator.Serialization
                 return new XElement("array", vals);
             }
 
+            if (value is Enum enumVal)
+                return enumVal.ToString("D");
+
             if (IsNestedObject(value))
                 return SerializeProperties(value);
 
@@ -161,10 +198,17 @@ namespace PowerShell.ObjectRehydrator.Serialization
         private static object ScalarOrNested(object item)
         {
             if (item is PSObject pso) item = pso.BaseObject;
+            if (item == null) return string.Empty;
             if (item is ScriptBlock sb)
                 return new XElement("scriptblock", sb.ToString());
+            if (item is DateTime dt)
+                return new XElement("datetime",
+                    new XAttribute("ticks", dt.Ticks),
+                    new XAttribute("kind", (int)dt.Kind));
             if (item is IDictionary || (item is IEnumerable && !(item is string)))
                 return SerializeValue(item);
+            if (item is Enum enumVal)
+                return enumVal.ToString("D");
             if (IsNestedObject(item))
                 return SerializeProperties(item);
             if (item is PSCustomObject)
@@ -172,22 +216,19 @@ namespace PowerShell.ObjectRehydrator.Serialization
             return item?.ToString() ?? string.Empty;
         }
 
-        /// <summary>PS class 用 TypeNames[0]（脚本类名），其余用 CLR FullName。</summary>
         private static string TypeOf(object value)
         {
-            if (value == null) return "System.String";
+            if (value == null) return "null";
 
             var ps = value as PSObject ?? PSObject.AsPSObject(value);
-            if (ps.TypeNames.Count > 0)
-            {
-                var tn = ps.TypeNames[0];
-                // 脚本 class 名不含点，直接用；System.* 用 CLR 全名更精确
-                if (!tn.StartsWith("System.", StringComparison.Ordinal))
-                    return tn;
-            }
+            var baseObj = ps.BaseObject;
 
-            var t = (value is PSObject w ? w.BaseObject : value)?.GetType();
-            return t?.FullName ?? t?.Name ?? "System.String";
+            if (baseObj == null) return "null";
+
+            if (ps.TypeNames.Count > 0 && !string.IsNullOrEmpty(ps.TypeNames[0]))
+                return ps.TypeNames[0];
+
+            return baseObj.GetType().FullName ?? baseObj.GetType().Name;
         }
 
         private static bool IsNestedObject(object value)
@@ -196,18 +237,26 @@ namespace PowerShell.ObjectRehydrator.Serialization
             if (value is string) return false;
             if (value is IDictionary) return false;
             if (value is IEnumerable) return false;
+            if (value is ScriptBlock) return false;
+            if (value is DateTime) return false;
+            if (value is Enum) return false;
 
             var t = value.GetType();
             if (t.IsPrimitive || t.IsEnum) return false;
-            if (value is decimal || value is DateTime || value is DateTimeOffset) return false;
-            if (value is Guid || value is TimeSpan || value is Uri) return false;
+            if (value is decimal || value is Guid || value is TimeSpan) return false;
+            if (value is DateTimeOffset || value is Uri) return false;
+            if (value is Version || value is char || value is bool) return false;
 
             var ps = value as PSObject ?? PSObject.AsPSObject(value);
             if (ps.TypeNames.Count > 0)
             {
                 var tn = ps.TypeNames[0];
                 if (tn.StartsWith("System.", StringComparison.Ordinal))
-                    return false;
+                {
+                    var writableProps = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                        .Any(p => p.CanWrite);
+                    return writableProps;
+                }
                 return true;
             }
             return false;

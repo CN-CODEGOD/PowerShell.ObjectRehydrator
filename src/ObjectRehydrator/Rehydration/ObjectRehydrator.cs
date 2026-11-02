@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Management.Automation;
@@ -9,18 +10,6 @@ using System.Xml.Linq;
 
 namespace PowerShell.ObjectRehydrator.Rehydration
 {
-    /// <summary>
-    /// 自描述 XML → 真实类型实例（零代码重建）。
-    ///
-    /// 顶层分流：
-    ///   &lt;array&gt;      → 直接构造 object[]（不走实例化）
-    ///   &lt;hashtable&gt;  → 直接构造 Hashtable
-    ///   &lt;scriptblock&gt;→ ScriptBlock.Create
-    ///   &lt;property&gt;*  → 类实例路径：TypeResolver + 多策略实例化 + 反射赋值
-    ///   纯文本          → 标量：LanguagePrimitives.ConvertTo
-    ///
-    /// 类型解析失败 / 实例化失败一律抛异常，不静默降级为 PSObject。
-    /// </summary>
     public sealed class ObjectRehydrator
     {
         private readonly TypeResolver _typeResolver;
@@ -37,21 +26,35 @@ namespace PowerShell.ObjectRehydrator.Rehydration
             string typeName = (string)objectElement.Attribute("type")
                            ?? (string)objectElement.Attribute("name");
 
-            // ---- 顶层弱类分流 ----
+            if (typeName == "null" || objectElement.Attribute("null")?.Value == "true")
+                return null;
+
+            var dtEl = objectElement.Element("datetime");
+            if (dtEl != null)
+            {
+                long ticks = long.Parse((string)dtEl.Attribute("ticks"));
+                var kind = (DateTimeKind)(int)dtEl.Attribute("kind");
+                return new DateTime(ticks, kind);
+            }
+
             var arrayEl = objectElement.Element("array");
-            if (arrayEl != null) return BuildArray(arrayEl);
+            if (arrayEl != null)
+                return BuildCollectionOrArray(typeName, arrayEl);
 
             var hashEl = objectElement.Element("hashtable");
-            if (hashEl != null) return BuildHashtable(hashEl);
+            if (hashEl != null)
+                return BuildDictionaryOrHashtable(typeName, hashEl);
 
             var sbEl = objectElement.Element("scriptblock");
             if (sbEl != null) return ScriptBlock.Create(sbEl.Value);
 
-            // ---- 类实例路径 ----
             if (objectElement.Elements("property").Any())
             {
-                Type type = ResolveOrFail(typeName, objectElement);
+                if (typeName == "PSCustomObject" ||
+                    typeName == "System.Management.Automation.PSCustomObject")
+                    return BuildPSCustomObject(objectElement);
 
+                Type type = ResolveOrFail(typeName, objectElement);
                 PSObject state = ParseState(objectElement);
                 object instance = CreateInstance(type, state, out string creationError);
 
@@ -63,12 +66,234 @@ namespace PowerShell.ObjectRehydrator.Rehydration
                 return instance;
             }
 
-            // ---- 标量 ----
             string text = objectElement.Value;
             if (string.IsNullOrEmpty(typeName)) return text;
 
+            if (typeName == "null") return null;
+
             Type scalarType = ResolveOrFail(typeName, objectElement);
-            return ConvertValue(text, scalarType);
+            return ConvertScalarValue(text, scalarType);
+        }
+
+        private object BuildCollectionOrArray(string typeName, XElement arrayEl)
+        {
+            var items = BuildItemList(arrayEl);
+
+            if (string.IsNullOrWhiteSpace(typeName) || typeName == "System.Object[]" || typeName.EndsWith("[]"))
+                return items.ToArray();
+
+            Type collectionType = _typeResolver.Resolve(typeName);
+            if (collectionType == null)
+                return items.ToArray();
+
+            return BuildTypedCollection(collectionType, items, typeName);
+        }
+
+        private object BuildTypedCollection(Type collectionType, List<object> items, string typeName)
+        {
+            try
+            {
+                if (collectionType == typeof(PSObject))
+                    return items.ToArray();
+
+                if (collectionType.IsGenericType)
+                {
+                    var genericDef = collectionType.GetGenericTypeDefinition();
+                    var elementType = collectionType.GetGenericArguments()[0];
+
+                    if (genericDef == typeof(List<>))
+                        return BuildList(elementType, items);
+                    if (genericDef == typeof(Queue<>))
+                        return BuildQueue(elementType, items);
+                    if (genericDef == typeof(HashSet<>))
+                        return BuildHashSet(elementType, items);
+                    if (genericDef == typeof(Stack<>))
+                        return BuildStack(elementType, items);
+                    if (genericDef == typeof(LinkedList<>))
+                        return BuildLinkedList(elementType, items);
+                }
+
+                var parameterless = Activator.CreateInstance(collectionType, nonPublic: true);
+                if (parameterless != null)
+                {
+                    var addMethod = collectionType.GetMethod("Enqueue")
+                                 ?? collectionType.GetMethod("Push")
+                                 ?? collectionType.GetMethod("Add");
+                    if (addMethod != null)
+                    {
+                        var addParamType = addMethod.GetParameters()[0].ParameterType;
+                        foreach (var item in items)
+                        {
+                            var converted = ConvertScalarValue(item, addParamType);
+                            addMethod.Invoke(parameterless, new[] { converted });
+                        }
+                    }
+                    return parameterless;
+                }
+            }
+            catch { }
+
+            return items.ToArray();
+        }
+
+        private static object BuildList(Type elementType, List<object> items)
+        {
+            var listType = typeof(List<>).MakeGenericType(elementType);
+            var list = Activator.CreateInstance(listType);
+            var addMethod = listType.GetMethod("Add");
+            foreach (var item in items)
+            {
+                var converted = ConvertScalarValue(item, elementType);
+                addMethod.Invoke(list, new[] { converted });
+            }
+            return list;
+        }
+
+        private static object BuildQueue(Type elementType, List<object> items)
+        {
+            var queueType = typeof(Queue<>).MakeGenericType(elementType);
+            var queue = Activator.CreateInstance(queueType);
+            var enqueueMethod = queueType.GetMethod("Enqueue");
+            foreach (var item in items)
+            {
+                var converted = ConvertScalarValue(item, elementType);
+                enqueueMethod.Invoke(queue, new[] { converted });
+            }
+            return queue;
+        }
+
+        private static object BuildHashSet(Type elementType, List<object> items)
+        {
+            var setType = typeof(HashSet<>).MakeGenericType(elementType);
+            var set = Activator.CreateInstance(setType);
+            var addMethod = setType.GetMethod("Add");
+            foreach (var item in items)
+            {
+                var converted = ConvertScalarValue(item, elementType);
+                addMethod.Invoke(set, new[] { converted });
+            }
+            return set;
+        }
+
+        private static object BuildStack(Type elementType, List<object> items)
+        {
+            var stackType = typeof(Stack<>).MakeGenericType(elementType);
+            var stack = Activator.CreateInstance(stackType);
+            var pushMethod = stackType.GetMethod("Push");
+            for (int i = items.Count - 1; i >= 0; i--)
+            {
+                var converted = ConvertScalarValue(items[i], elementType);
+                pushMethod.Invoke(stack, new[] { converted });
+            }
+            return stack;
+        }
+
+        private static object BuildLinkedList(Type elementType, List<object> items)
+        {
+            var listType = typeof(LinkedList<>).MakeGenericType(elementType);
+            var list = Activator.CreateInstance(listType);
+            var addLastMethod = listType.GetMethod("AddLast", new[] { elementType });
+            foreach (var item in items)
+            {
+                var converted = ConvertScalarValue(item, elementType);
+                addLastMethod.Invoke(list, new[] { converted });
+            }
+            return list;
+        }
+
+        private object BuildDictionaryOrHashtable(string typeName, XElement hashtableEl)
+        {
+            if (string.IsNullOrWhiteSpace(typeName) ||
+                typeName == "System.Collections.Hashtable" ||
+                typeName == "Hashtable")
+                return BuildHashtable(hashtableEl);
+
+            Type dictType = _typeResolver.Resolve(typeName);
+            if (dictType == null || !dictType.IsGenericType)
+                return BuildHashtable(hashtableEl);
+
+            var genericDef = dictType.GetGenericTypeDefinition();
+            if (genericDef == typeof(Dictionary<,>) ||
+                genericDef == typeof(SortedDictionary<,>) ||
+                genericDef == typeof(ConcurrentDictionary<,>))
+            {
+                return BuildTypedDictionary(dictType, hashtableEl);
+            }
+
+            return BuildHashtable(hashtableEl);
+        }
+
+        private object BuildTypedDictionary(Type dictType, XElement hashtableEl)
+        {
+            try
+            {
+                var instance = Activator.CreateInstance(dictType, nonPublic: true);
+                var genericArgs = dictType.GetGenericArguments();
+                var keyType = genericArgs[0];
+                var valueType = genericArgs[1];
+
+                var addMethod = dictType.GetMethod("Add", new[] { keyType, valueType });
+
+                foreach (var keyEl in hashtableEl.Elements("key"))
+                {
+                    string keyName = (string)keyEl.Attribute("name") ?? string.Empty;
+                    object k = ConvertScalarValue(keyName, keyType);
+                    object v = ParsePropertyNode(keyEl);
+                    if (v != null && valueType != typeof(object))
+                        v = ConvertScalarValue(v, valueType);
+
+                    if (addMethod != null)
+                        addMethod.Invoke(instance, new[] { k, v });
+                    else if (instance is IDictionary dict)
+                        dict[k] = v;
+                }
+
+                return instance;
+            }
+            catch
+            {
+                return BuildHashtable(hashtableEl);
+            }
+        }
+
+        private Hashtable BuildHashtable(XElement hashtableEl)
+        {
+            var ht = new Hashtable();
+            foreach (var key in hashtableEl.Elements("key"))
+            {
+                string keyName = (string)key.Attribute("name") ?? string.Empty;
+                string keyTypeStr = (string)key.Attribute("keyType");
+
+                object k = keyName;
+                if (!string.IsNullOrEmpty(keyTypeStr))
+                {
+                    Type kt = _typeResolver.Resolve(keyTypeStr);
+                    if (kt != null) k = ConvertScalarValue(keyName, kt);
+                }
+
+                ht[k] = ParsePropertyNode(key);
+            }
+            return ht;
+        }
+
+        private PSObject BuildPSCustomObject(XElement objectElement)
+        {
+            var ps = new PSObject();
+            foreach (var prop in objectElement.Elements("property"))
+            {
+                string name = (string)prop.Attribute("name");
+                if (string.IsNullOrEmpty(name)) continue;
+                ps.Properties.Add(new PSNoteProperty(name, ParsePropertyNode(prop)));
+            }
+            return ps;
+        }
+
+        private List<object> BuildItemList(XElement arrayEl)
+        {
+            var list = new List<object>();
+            foreach (var v in arrayEl.Elements("value"))
+                list.Add(ParsePropertyNode(v));
+            return list;
         }
 
         private Type ResolveOrFail(string typeName, XElement context)
@@ -85,20 +310,12 @@ namespace PowerShell.ObjectRehydrator.Rehydration
             return type;
         }
 
-        /// <summary>
-        /// 多策略实例化：
-        ///   1) 无参构造 Activator.CreateInstance
-        ///   2) 单参构造（PSObject / PSCustomObject / object）传入 state
-        ///   3) 任意单参构造传入 state
-        ///   4) RuntimeHelpers.GetUninitializedObject（跳过构造函数造壳）
-        /// </summary>
         private static object CreateInstance(Type type, PSObject state, out string error)
         {
             error = null;
             const BindingFlags flags =
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-            // 1) 无参构造
             try
             {
                 var o = Activator.CreateInstance(type, nonPublic: true);
@@ -111,7 +328,6 @@ namespace PowerShell.ObjectRehydrator.Rehydration
 
             var ctors = type.GetConstructors(flags);
 
-            // 2) 单参构造，参数类型可接受 state
             foreach (var ctor in ctors)
             {
                 var ps = ctor.GetParameters();
@@ -126,7 +342,6 @@ namespace PowerShell.ObjectRehydrator.Rehydration
                 }
             }
 
-            // 3) 任意单参构造
             foreach (var ctor in ctors)
             {
                 if (ctor.GetParameters().Length != 1) continue;
@@ -134,7 +349,6 @@ namespace PowerShell.ObjectRehydrator.Rehydration
                 if (r != null) return r;
             }
 
-            // 4) 跳过构造函数直接造壳
             try
             {
                 var shell = RuntimeHelpers.GetUninitializedObject(type);
@@ -149,7 +363,6 @@ namespace PowerShell.ObjectRehydrator.Rehydration
             return null;
         }
 
-        /// <summary>依次尝试用 PSObject / BaseObject 调用构造函数。</summary>
         private static object TryInvokeCtor(ConstructorInfo ctor, PSObject state)
         {
             foreach (var arg in new object[] { state, state?.BaseObject })
@@ -161,7 +374,6 @@ namespace PowerShell.ObjectRehydrator.Rehydration
             return null;
         }
 
-        /// <summary>反射逐属性赋值；嵌套对象按 type 递归重建。</summary>
         private void Populate(object instance, Type type, PSObject state, XElement objectElement)
         {
             const BindingFlags flags =
@@ -175,55 +387,54 @@ namespace PowerShell.ObjectRehydrator.Rehydration
 
             foreach (var note in state.Properties)
             {
-                var prop = type.GetProperty(note.Name, flags);
-                if (prop == null || !prop.CanWrite) continue;
-
                 object value = note.Value;
+                Type declaredType = null;
 
                 if (propElements.TryGetValue(note.Name, out var propEl))
                 {
                     string declaredTypeName = (string)propEl.Attribute("type");
 
-                    // 嵌套对象：递归重建
                     if (propEl.Elements("property").Any() && !string.IsNullOrEmpty(declaredTypeName))
                     {
-                        var nested = new XElement("object",
-                            new XAttribute("name", declaredTypeName),
-                            new XAttribute("type", declaredTypeName),
-                            propEl.Elements());
-                        value = Rehydrate(nested);
+                        if (declaredTypeName != "PSCustomObject" &&
+                            declaredTypeName != "System.Management.Automation.PSCustomObject")
+                        {
+                            var nested = new XElement("object",
+                                new XAttribute("name", declaredTypeName),
+                                new XAttribute("type", declaredTypeName),
+                                propEl.Elements());
+                            value = Rehydrate(nested);
+                        }
                     }
                     else if (!string.IsNullOrEmpty(declaredTypeName))
                     {
-                        Type declared = _typeResolver.Resolve(declaredTypeName);
-                        if (declared != null)
-                            value = ConvertValue(value, declared);
+                        declaredType = _typeResolver.Resolve(declaredTypeName);
+                        if (declaredType != null)
+                            value = ConvertScalarValue(value, declaredType);
                     }
                 }
-                else if (prop.PropertyType != typeof(object))
+
+                var prop = type.GetProperty(note.Name, flags);
+                if (prop != null && prop.CanWrite)
                 {
-                    value = ConvertValue(value, prop.PropertyType);
+                    if (declaredType == null && prop.PropertyType != typeof(object))
+                        value = ConvertScalarValue(value, prop.PropertyType);
+
+                    try { prop.SetValue(instance, value); }
+                    catch { }
+                    continue;
                 }
 
-                try { prop.SetValue(instance, value); }
-                catch { }
+                var field = type.GetField(note.Name, flags);
+                if (field != null && !field.IsInitOnly)
+                {
+                    if (declaredType == null && field.FieldType != typeof(object))
+                        value = ConvertScalarValue(value, field.FieldType);
+
+                    try { field.SetValue(instance, value); }
+                    catch { }
+                }
             }
-        }
-
-        private static object ConvertValue(object value, Type targetType)
-        {
-            if (value == null) return null;
-            if (targetType == null) return value;
-            if (targetType.IsInstanceOfType(value)) return value;
-
-            try
-            {
-                if (LanguagePrimitives.TryConvertTo(value, targetType, out object converted))
-                    return converted;
-            }
-            catch { }
-
-            return value;
         }
 
         private PSObject ParseState(XElement objectElement)
@@ -233,16 +444,23 @@ namespace PowerShell.ObjectRehydrator.Rehydration
             {
                 string name = (string)prop.Attribute("name");
                 if (string.IsNullOrEmpty(name)) continue;
-
                 result.Properties.Add(new PSNoteProperty(name, ParsePropertyNode(prop)));
             }
             return result;
         }
 
-        /// <summary>解析一个 property/key/value 节点的内容（按其子结构分流）。</summary>
         private object ParsePropertyNode(XElement node)
         {
-            // 嵌套对象
+            if (node == null) return null;
+
+            var dtEl = node.Element("datetime");
+            if (dtEl != null)
+            {
+                long ticks = long.Parse((string)dtEl.Attribute("ticks"));
+                var kind = (DateTimeKind)(int)dtEl.Attribute("kind");
+                return new DateTime(ticks, kind);
+            }
+
             if (node.Elements("property").Any())
             {
                 string nestedType = (string)node.Attribute("type")
@@ -255,51 +473,82 @@ namespace PowerShell.ObjectRehydrator.Rehydration
             }
 
             var arrayEl = node.Element("array");
-            if (arrayEl != null) return BuildArray(arrayEl);
+            if (arrayEl != null)
+            {
+                string arrType = (string)node.Attribute("type");
+                return BuildCollectionOrArray(arrType, arrayEl);
+            }
 
             var hashEl = node.Element("hashtable");
-            if (hashEl != null) return BuildHashtable(hashEl);
+            if (hashEl != null)
+            {
+                string hashType = (string)node.Attribute("type");
+                return BuildDictionaryOrHashtable(hashType, hashEl);
+            }
 
             var sbEl = node.Element("scriptblock");
             if (sbEl != null) return ScriptBlock.Create(sbEl.Value);
 
-            // 标量
             string declared = (string)node.Attribute("type");
             string text = node.Value;
+
+            if (declared == "null") return null;
+
             if (!string.IsNullOrEmpty(declared))
             {
                 Type t = _typeResolver.Resolve(declared);
-                if (t != null) return ConvertValue(text, t);
+                if (t != null) return ConvertScalarValue(text, t);
             }
             return text;
         }
 
-        private object[] BuildArray(XElement arrayEl)
+        internal static object ConvertScalarValue(object value, Type targetType)
         {
-            var list = new List<object>();
-            foreach (var v in arrayEl.Elements("value"))
-                list.Add(ParsePropertyNode(v));
-            return list.ToArray();
-        }
+            if (value == null) return null;
+            if (targetType == null) return value;
+            if (targetType == typeof(object)) return value;
+            if (targetType.IsInstanceOfType(value)) return value;
 
-        private Hashtable BuildHashtable(XElement hashtableEl)
-        {
-            var ht = new Hashtable();
-            foreach (var key in hashtableEl.Elements("key"))
+            if (targetType == typeof(Guid))
             {
-                string keyName = (string)key.Attribute("name") ?? string.Empty;
-                string keyType = (string)key.Attribute("keyType");
-
-                object k = keyName;
-                if (!string.IsNullOrEmpty(keyType))
-                {
-                    Type kt = _typeResolver.Resolve(keyType);
-                    if (kt != null) k = ConvertValue(keyName, kt);
-                }
-
-                ht[k] = ParsePropertyNode(key);
+                if (Guid.TryParse(value.ToString(), out var g)) return g;
             }
-            return ht;
+
+            if (targetType == typeof(Version))
+            {
+                if (Version.TryParse(value.ToString(), out var v)) return v;
+            }
+
+            if (targetType.IsEnum)
+            {
+                try
+                {
+                    var underlyingValue = System.Convert.ToInt64(value);
+                    return Enum.ToObject(targetType, underlyingValue);
+                }
+                catch { }
+
+                try
+                {
+                    return Enum.Parse(targetType, value.ToString(), ignoreCase: true);
+                }
+                catch { }
+            }
+
+            try
+            {
+                return System.Convert.ChangeType(value, targetType);
+            }
+            catch { }
+
+            try
+            {
+                if (LanguagePrimitives.TryConvertTo(value, targetType, out object converted))
+                    return converted;
+            }
+            catch { }
+
+            return value;
         }
     }
 }

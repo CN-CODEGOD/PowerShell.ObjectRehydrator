@@ -8,17 +8,12 @@ using PowerShell.ObjectRehydrator.Serialization;
 
 namespace PowerShell.ObjectRehydrator.Cmdlets
 {
-    /// <summary>
-    /// Export-XmlObject — 方案一外部入口。
-    /// 用 InstanceSerializer 自动序列化（零代码，不依赖 $obj.save()）。
-    /// 输出自描述 XML（每层带 type 属性）。
-    /// </summary>
     [Cmdlet(VerbsData.Export, "XmlObject")]
     public sealed class ExportXmlObjectCommand : PSCmdlet
     {
         [Parameter(Mandatory = true, Position = 0, ValueFromPipeline = true)]
-        [ValidateNotNull]
-        public PSObject InputObject { get; set; }
+        [AllowNull]
+        public object InputObject { get; set; }
 
         [Parameter(Mandatory = true, Position = 1)]
         [ValidateNotNullOrEmpty]
@@ -39,9 +34,7 @@ namespace PowerShell.ObjectRehydrator.Cmdlets
 
         protected override void ProcessRecord()
         {
-            // 方案一：直接用 InstanceSerializer（零代码，不依赖类方法）
-            object baseObj = InputObject.BaseObject ?? InputObject;
-            XElement node = InstanceSerializer.ToObjectElement(baseObj);
+            XElement node = InstanceSerializer.ToObjectElement(InputObject);
             _root.Add(node);
         }
 
